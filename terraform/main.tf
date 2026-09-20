@@ -1,21 +1,30 @@
-resource "kubernetes_namespace" "homework" {
-    metadata {
-        name = "production"
+resource "kubernetes_namespace_v1" "homework" {
+  metadata {
+    name = var.namespace
+    labels = {
+      environment = var.environment
     }
+  }
 }
 
 resource "helm_release" "homework" {
-    name       = "homework"
-    chart      = "../helm/homework"
-    namespace  = kubernetes_namespace.homework.metadata[0].name
+  name      = "myapp"
+  chart     = "${path.module}/../helm"
+  namespace = kubernetes_namespace_v1.homework.metadata[0].name
 
-    set {
-        name  = "image.tag"
-        value = 
-    }
+  set = [
+    {
+      name  = "image.tag"
+      value = var.image_tag
+    },
+    {
+      name  = "environment"
+      value = var.environment
+    },
+  ]
 
-    set {
-        name  = "environment"
-        value = prod
-    }
+  atomic          = true
+  wait            = true
+  timeout         = 300
+  cleanup_on_fail = true
 }
