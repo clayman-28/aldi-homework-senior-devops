@@ -62,4 +62,4 @@ Summary: 3 resources found parsing stdin - Valid: 3, Invalid: 0, Errors: 0, Skip
 
 
 # Goal 2
-Please see [OVERVIEW.md](OVERVIEW.md)
+Please see [README.md](README.md)
