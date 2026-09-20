@@ -1,13 +1,113 @@
 stages:
+  - validate
+  - test
   - build
   - deploy
 
-build:
-  stage: build
-  script:
-    - echo "Building the application..."
+variables:
+  IMAGE_NAME: $CI_REGISTRY_IMAGE/myapp
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+  TF_DIR: terraform
 
-deploy:
-  stage: deploy
+lint:python:
+  stage: validate
+  image: python:3.13-slim
   script:
-    - echo "Deploying the application..."
+    - pip install --no-cache-dir ruff
+    - ruff check app/
+
+lint:helm:
+  stage: validate
+  image: alpine/helm:3.16.3
+  script:
+    - helm lint helm/
+    - helm template myapp helm/ > /dev/null
+
+validate:terraform:
+  stage: validate
+  image:
+    name: hashicorp/terraform:1.9
+    entrypoint: [""]
+  script:
+    - terraform -chdir=$TF_DIR fmt -check -recursive
+    - terraform -chdir=$TF_DIR init -backend=false
+    - terraform -chdir=$TF_DIR validate
+
+test:python:
+  stage: test
+  image: python:3.13-slim
+  script:
+    - pip install --no-cache-dir -r app/requirements.txt -r app/requirements-dev.txt
+    - cd app && python -m pytest -q
+
+build:image:
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  before_script:
+    - mkdir -p /kaniko/.docker
+    - |
+      AUTH=$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')
+      printf '{"auths":{"%s":{"auth":"%s"}}}' "$CI_REGISTRY" "$AUTH" > /kaniko/.docker/config.json
+  script:
+    - |
+      DESTINATIONS="--destination $IMAGE_NAME:$IMAGE_TAG"
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        DESTINATIONS="$DESTINATIONS --destination $IMAGE_NAME:latest"
+      fi
+      /kaniko/executor \
+        --context "$CI_PROJECT_DIR" \
+        --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
+        --cache=true \
+        --cache-repo "$IMAGE_NAME/cache" \
+        $DESTINATIONS
+
+scan:image:
+  stage: build
+  needs: ["build:image"]
+  image:
+    name: aquasec/trivy:0.58.1
+    entrypoint: [""]
+  script:
+    - trivy image --exit-code 0 --severity HIGH,CRITICAL "$IMAGE_NAME:$IMAGE_TAG"
+  allow_failure: true
+
+.deploy:
+  stage: deploy
+  image:
+    name: hashicorp/terraform:1.9
+    entrypoint: [""]
+  before_script:
+    - mkdir -p ~/.kube
+    - echo "$KUBE_CONFIG" | base64 -d > ~/.kube/config
+    - chmod 600 ~/.kube/config
+  script:
+    - terraform -chdir=$TF_DIR init
+    - >
+      terraform -chdir=$TF_DIR apply -auto-approve
+      -var="image_tag=$IMAGE_TAG"
+      -var="image_repository=$IMAGE_NAME"
+      -var="environment=$ENVIRONMENT"
+      -var="namespace=$NAMESPACE"
+
+deploy:dev:
+  extends: .deploy
+  variables:
+    ENVIRONMENT: dev
+    NAMESPACE: homework-dev
+  environment:
+    name: dev
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+deploy:prod:
+  extends: .deploy
+  variables:
+    ENVIRONMENT: prod
+    NAMESPACE: homework-prod
+  environment:
+    name: production
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: manual
