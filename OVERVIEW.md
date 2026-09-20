@@ -24,13 +24,19 @@
     - added health and statup probes, for orchestration it is mandatory to let kubernetes know if the app is healthy and/or needs attention
     - added resource limits, it's the best practice to figure out if something is wrong with the app and consuming more more than it's allowed to. also it can prevent additional costs and make the node resource starve.
 
-- I made a validation with the templates using helm cli and kubeform:
-'''bash
-     helm template myapp . | kubeconform -strict -summary                                                                                                                                                                                             2s
-Summary: 3 resources found parsing stdin - Valid: 3, Invalid: 0, Errors: 0, Skipped: 0
-'''
+- I made a validation with the templates using helm cli and kubeconform:
 
- ## Terraform:
+```bash
+helm template myapp . | kubeconform -strict -summary
+```
+
+Output:
+
+```text
+Summary: 3 resources found parsing stdin - Valid: 3, Invalid: 0, Errors: 0, Skipped: 0
+```
+
+## Terraform:
 
 - There were syntax errors in main tf, missing values and hardcoded variables. (I used terraform fmt for validation)
 - Helm chart path was wrong
@@ -54,3 +60,6 @@ Summary: 3 resources found parsing stdin - Valid: 3, Invalid: 0, Errors: 0, Skip
 
 * For transparency: I created the logic and the required steps and security improvements, but i used claude sonnet to write the app test and helped me to implement GitLab CI syntax, since I am using Jenkins for CI for a long time. I will learn it's syntax if that's the default CI tool at the company.
 
+
+# Goal 2
+Please see [OVERVIEW.md](OVERVIEW.md)

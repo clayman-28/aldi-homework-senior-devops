@@ -1,226 +1,118 @@
-# DevOps Engineer Homework
+## Repository layout
 
-## Overview
+- `app/` holds the application code and its tests.
+- `Dockerfile` builds the container image in two stages.
+- `helm/` holds the chart that deploys the application.
+- `terraform/` creates the namespace and installs the chart.
+- `.gitlab-ci.yml` defines the validate, test, build and deploy stages.
+- `OVERVIEW.md` lists every change made to the original skeleton.
 
-The goal of this assignment is to evaluate how you approach a typical DevOps engineering task involving:
+## Requirements
 
-- Application development / scripting
-- Containerization
-- Kubernetes
-- Helm
-- Terraform
-- CI/CD
-- Code review
+- Docker 24 or later
+- Python 3.13
+- Helm 3.16 or later
+- Terraform 1.9 or later
+- kind or another local Kubernetes cluster, only for the deployment steps
 
-The repository contains intentionally incomplete and imperfect components.
-Your task is to complete, improve and document the solution.
+## API
 
-You are not expected to produce a perfect production-ready system. We are more interested in your engineering approach, decision-making and ability to balance quality with the time constraints.
+The service listens on port 8080 and answers these requests.
 
-Time limit: approximately **3 hours**
+- `GET /health` returns `{"status": "ok"}`.
+- `GET /version` returns the value of the `APP_VERSION` variable, `1.0.0` by default.
+- `GET /env` returns the value of the `ENVIRONMENT` variable, `dev` by default.
+- `POST /config` stores a name and a value, and returns them with status 201.
+- `GET /config/{name}` returns the stored entry, or status 404.
+- `DELETE /config/{name}` removes the entry and returns `{"deleted": true}`, or status 404.
 
-## Repository Contents
+## Build and run the container
 
-The repository contains:
-
-- An incomplete application skeleton
-- Terraform configuration requiring review and improvement
-- An incomplete Helm chart
-- An incomplete CI/CD pipeline
-
-Your task is to complete and improve these components. Our goal is to understand your engineering approach, and we will build the upcoming technical interview on this project.
-
-## Goal 1
-
-Complete and improve the provided project.
-
-The repository contains the following files:
-
-- Incomplete application code
-- Broken/incomplete terraform configuration
-- Incomplete Helm Chart
-- Incomplete Gitlab CI pipeline
-
-### Requirements
-
-#### Application
-
-Implement a simple application in either:
-
-- Go
-- Python
-
-The application must expose the following endpoints:
-
-##### `GET /health`
-
-**Response:**
-
-```json
-{
-    "status": "ok"
-}
-```
-
-##### `GET /version`
-
-**Response:**
-
-```json
-{
-    "version": "1.0.0"
-}
-```
-
-##### `GET /env`
-
-**Response:**
-
-```json
-{
-    "environment": "<value from ENVIRONMENT variable>"
-}
-```
-
-##### `POST /config`
-
-**Request:**
-
-```json
-{
-    "name": "database_url",
-    "value": "postgres://example"
-}
-```
-
-**Response:**
-
-```json
-{
-    "name": "database_url",
-    "value": "postgres://example"
-}
-```
-
-##### `GET /config/{name}`
-
-**Example:**
+Run the build from the repository root, because the Dockerfile copies files from `app/`.
 
 ```bash
-GET /config/database_url
+docker build -t myapp:0.1.0 .
+docker run --rm -p 8080:8080 -e ENVIRONMENT=docker myapp:0.1.0
 ```
 
-**Response:**
+The image runs gunicorn as user 10001 and starts one worker process.
 
-```json
-{
-    "name": "database_url",
-    "value": "postgres://example"
-}
+## Validate the Helm chart
+
+```bash
+helm lint helm/
+helm template myapp helm/ | kubeconform -strict -summary
 ```
 
-##### `DELETE /config/{name}`
+## Deploy to a local cluster
 
-**Response:**
+I tested the deployment on my own Kubernetes cluster in my homelab.
+For this reason the repository contains no cluster definition, such as a kind
+configuration file. The chart and the Terraform code work with any cluster that
+your current kubectl context points at.
 
-```json
-{
-    "deleted": true
-}
+Install the chart.
+
+```bash
+helm upgrade --install myapp helm/ \
+  --namespace homework --create-namespace \
+  --set image.tag=0.1.0 \
+  --set environment=dev
 ```
 
-#### Containerization
+## Deploy with Terraform
 
-- Create the necessary Dockerfile with minimal setup
-- The image should:
-  - build successfully
-  - run locally
-  - expose the application endpoint
+Terraform creates the namespace and installs the same chart as a Helm release.
+Terraform reads the cluster address from the kubeconfig file in `kubeconfig_path`.
 
-#### Terraform
+```bash
+cd terraform
+terraform init
+terraform plan -var="image_tag=0.1.0"
+terraform apply -var="image_tag=0.1.0"
+terraform output
+```
 
-- Review and fix/complete the Terraform code
-- The Terraform code contains several issues and areas for improvement
-- In case you don't get time to implement changes describe what would you still improve and why
-- Document any changes you make
+## Pipeline
 
-#### Helm
+The pipeline runs four stages.
 
-- Review and fix/complete the Helm Chart
-- The chart should deploy the application to Kubernetes
-- Document any change you make
+1. `validate` runs `ruff`, `helm lint`, `helm template`, `terraform fmt` and `terraform validate`.
+2. `test` runs pytest.
+3. `build` builds the image with kaniko, pushes it under the commit hash, and scans it with Trivy.
+4. `deploy` runs `terraform apply` against the cluster.
 
-#### Gitlab CI
+## What I changed
 
-- Complete the pipeline so it becomes capable of building and deploying the application
-- The pipeline should support the workflow required to build and deploy the application
-- The pipeline should be logically complete and demonstrate how you would automate the process
-- Add any other necessary jobs to the pipeline
+See [OVERVIEW.md](OVERVIEW.md) for the list of fixes and improvements, with the reason for each one.
 
-#### Documentation
+## Assumptions
 
-Update the project README with following information.
+- The service is a demonstration, so the configuration store does not need to survive a restart.
+- It's configured to run on a local cluster such as minikube or local kubernetes cluster, no cloud provided.
+- The GitLab instance provides its own container registry and a runner, even though I have one at home I did not wanted to include it.
+- The hosting only works locally without TLS, but I'll get back to it later.
 
-##### What You Changed
+## Known limitations
 
-Describe the changes and the rationale behind it.
+- No configmap, no stateful data, if the container dies everything is lost.
+- Two replicas answer with different data, because each pod holds its own store.
+- The chart and the Terraform code were tested on a single node cluster in a homelab,
+  and validated with `helm lint`, `helm template`, kubeconform and `terraform validate`.
+- No cloud provider and no managed ingress controller were part of that test. (no MS Graph calls and resource creations)
+- The pipeline was never executed, because it needs a GitLab runner, a registry and a cluster. (I just assume it works :))
+- There is no ServiceAccount, no NetworkPolicy, no PodDisruptionBudget and no autoscaler. (usually it is decided with the deployment to communicate with other services and scaling under load)
+- Security checks do not fail the pipeline
 
-##### Assumptions
+## Production improvements
 
-Describe the assumptions made while completing the assignment.
-
-##### Known Limitations
-
-Describe anything you intentionally omitted.
-
-##### Production Improvements
-
-Describe how you would evolve this solution for production use.
-
-### Deliverables
-
-- Source Code of the Go/Python application
-- Dockerfile
-- Terraform changes
-- Helm changes
-- CI pipeline changes
-- README describing decisions, assumptions and user guide for the project.
-
-### Notes
-
-You are not expected to deploy to a cloud provider.
-The solution should work with a local Kubernetes cluster such as:
-
-- Kind
-- Minikube
-- K3d
-
-### Timing
-
-Timebox yourself to approximately **3 hours**. If you can't finish the work within the timebox, describe in the README.md what is left and how you would approach it.
-
-## Goal 2
-
-You get this half-baked project from one of your colleagues who is a Junior and asking for your guidance.
-
-Provide a short code review in `REVIEW.md` where you address the **top 5 most important things** to fix so the colleague can move forward.
-
-### Review Timing
-
-Spend no more than **30 minutes** on review and feedback.
-
-### Evaluation Criteria
-
-We will evaluate:
-
-- Code quality
-- Terraform quality
-- Kubernetes and Helm knowledge
-- CI/CD design and implementation
-- Documentation quality
-- Code review quality
-- Maintainability and operational thinking
-
-### Use of AI
-
-The use of AI-assisted tools is permitted. However, we encourage you to complete the assignment primarily based on your own knowledge, experience and reasoning. During the interview, we will discuss your implementation choices, trade-offs and decision-making process, so it is important that you fully understand and can explain every part of your solution.
+- Store the configuration entries in a database, for example Postgres, and remove the single
+  worker restriction. Replicas then serve the same data and the service scales horizontally.
+- Move tf state file to a protected cloud storage, such as a blob.
+- Split Terraform per environment with workspaces or separate directories and variable files.
+- Add TLS and automate it with certgen service.
+- Read secrets from a secret manager, for example Vault or the External Secrets Operator,
+  instead of CI variables. I use vault at home and Azure Key Vault at enterprise.
+- I would not use terraform to deploy apps in Kubernetes, ArgoCD or Helm would be better for this task. Terraform is good for deploying resources in cloud and VMs with configurations. For better management it highly recommended.
+- No logging, no log collectors for the app. I would deploy a Grafana Alloy to  collect pod logs, and user prometheus and annotate the exporters in the deployment.
+- Fail the pipeline on high and critical vulnerabilities once the base image is clean. Also not just Trivy, I would use Dependency Track as well to check the external libraries for zero day vulnurabilities.
